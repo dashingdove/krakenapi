@@ -2,7 +2,8 @@ import requests
 import json
 import hashlib
 import hmac
-from base64 import b64decode
+from base64 import b64encode, b64decode
+from urllib.parse import urlencode
 
 class KrakenAPI:
 
@@ -27,16 +28,15 @@ class KrakenAPI:
     def endpoint_url(endpoint:str):
         return f"https://api.kraken.com/0/{KrakenAPI.endpoint_type(endpoint)}/{endpoint}"
     
-    def make_headers(self, uri:str, data:dict):
-        return {
-            "API-Key": self.api_key,
-            "API-Sign":
-                hmac.new(
-                    self.api_secret.encode(),
-                    (uri + hashlib.sha256((str(self.nonce) + '&'.join(f"{k}={v}" for k, v in data.items())).encode()).hexdigest()).encode(),
-                    hashlib.sha512
-                ) + b64decode(self.api_secret.encode()).decode()
-        }
+    def get_signature(self, url, data):
+
+        postdata = urlencode(data)
+        encoded = (str(data['nonce']) + postdata).encode()
+        message = url.encode() + hashlib.sha256(encoded).digest()
+
+        mac = hmac.new(b64decode(self.api_secret), message, hashlib.sha512)
+        sigdigest = b64encode(mac.digest())
+        return sigdigest.decode()
     
     @staticmethod
     def handle_response(response:requests.Response):
@@ -56,11 +56,15 @@ class KrakenAPI:
         response = requests.get(url, **kwargs)
         return KrakenAPI.handle_response(response)
         
-    def post_request(self, url:str, body:dict, **kwargs):
+    def post_request(self, url:str, data:dict, **kwargs):
+        data = data | {"nonce": self.nonce}
         response = requests.post(
             url,
-            headers=self.make_headers(url, body),
-            body=body,
+            headers={
+                "API-Key": self.api_key,
+                "API-Sign": self.get_signature(url, data),
+            },
+            data=data,
             **kwargs
         )
         self.nonce += 1
