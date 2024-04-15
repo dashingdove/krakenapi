@@ -4,13 +4,13 @@ import hashlib
 import hmac
 from base64 import b64encode, b64decode
 from urllib.parse import urlencode
+import time
 
 class KrakenAPI:
 
-    def __init__(self, api_key:str, api_secret:str, nonce:int=0):
+    def __init__(self, api_key:str, api_secret:str):
         self.api_key = api_key
         self.api_secret = api_secret
-        self.nonce = nonce
 
     class APIError (Exception):
         "An error occurred when attempting to call the API"
@@ -57,7 +57,7 @@ class KrakenAPI:
         return KrakenAPI.handle_response(response)
         
     def post_request(self, url:str, data:dict, **kwargs):
-        data = data | {"nonce": self.nonce}
+        data = data | {"nonce": str(int(time.time()*1000))}
         response = requests.post(
             url,
             headers={
@@ -67,7 +67,6 @@ class KrakenAPI:
             data=data,
             **kwargs
         )
-        self.nonce += 1
         return KrakenAPI.handle_response(response)
     
     @staticmethod
@@ -86,15 +85,23 @@ class KrakenAPI:
         except:
             raise KrakenAPI.APIError(f"Unexpected response format: {json}")
         
-    def place_order(self, pair:str, amount:float, commit:bool=True):
+    def place_order(self, pair:str, volume:float, validate:bool=False):
         """
-        Places a market order against the specified pair.
+        Places a market buy order against the specified pair.
         :param pair: A currency pair e.g. "xbtusd"
-        :param spend: The amount to buy.
-        :param commit: If False, the order will not be placed (this can be used for test purposes).
+        :param volume: The amount to buy.
+        :param validate: If True, the order will not be placed (this can be used for test purposes).
         """
 
-        return self.post_request(KrakenAPI.endpoint_url("AddOrder"), {})
+        return self.post_request(KrakenAPI.endpoint_url("AddOrder"),
+            {
+                "pair": pair,
+                "volume": volume,
+                "type": "buy",
+                "ordertype": "market",
+                "validate": validate,
+            }
+        )
 
 
 try:
@@ -118,5 +125,4 @@ print(f'Current BTC price: £{btc_spot}')
 print(f'Order Value: £{config["spend"]} -> \u20bf{order_value_btc:.8f}')
 
 api_instance = KrakenAPI(config["api_key"], config["api_secret"])
-order_json = api_instance.place_order(config["pair"], order_value_btc, False)
-print(order_json)
+order_json = api_instance.place_order(config["pair"], order_value_btc, True)
