@@ -1,7 +1,15 @@
 import requests
 import json
+import hashlib
+import hmac
+from base64 import b64decode
 
 class KrakenAPI:
+
+    def __init__(self, api_key:str, api_secret:str, nonce:int=0):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.nonce = nonce
 
     class APIError (Exception):
         "An error occurred when attempting to call the API"
@@ -19,25 +27,72 @@ class KrakenAPI:
     def endpoint_url(endpoint:str):
         return f"https://api.kraken.com/0/{KrakenAPI.endpoint_type(endpoint)}/{endpoint}"
     
+    def make_headers(self, uri:str, data:dict):
+        return {
+            "API-Key": self.api_key,
+            "API-Sign":
+                hmac.new(
+                    self.api_secret.encode(),
+                    (uri + hashlib.sha256((str(self.nonce) + '&'.join(f"{k}={v}" for k, v in data.items())).encode()).hexdigest()).encode(),
+                    hashlib.sha512
+                ) + b64decode(self.api_secret.encode()).decode()
+        }
+    
     @staticmethod
-    def get_spot_price(pair:str):
-
-        curr_a = pair[:3]
-        curr_b = pair[3:]
-
-        response = requests.get(KrakenAPI.endpoint_url("Ticker"), params={"pair": pair})
+    def handle_response(response:requests.Response):
         if response.ok:
             try:
                 json = response.json()
             except requests.exceptions.JSONDecodeError:
                 raise KrakenAPI.APIError("Response was not JSON")
-            try:
-                return float(json["result"][f"X{curr_a.upper()}Z{curr_b.upper()}"]["a"][0])
-            except:
-                raise KrakenAPI.APIError(f"Unexpected response format: {json}")
+            if (error:=json["error"]):
+                raise KrakenAPI.APIError(f"API request failed. The following error was returned: {error}")
+            return json
         else:
             raise KrakenAPI.APIError("Unable to contact API")
+
+    @staticmethod
+    def get_request(url:str, **kwargs):
+        response = requests.get(url, **kwargs)
+        return KrakenAPI.handle_response(response)
         
+    def post_request(self, url:str, body:dict, **kwargs):
+        response = requests.post(
+            url,
+            headers=self.make_headers(url, body),
+            body=body,
+            **kwargs
+        )
+        self.nonce += 1
+        return KrakenAPI.handle_response(response)
+    
+    @staticmethod
+    def get_spot_price(pair:str):
+        """
+        Gets the current spot price of the specified pair.
+        :param pair: A currency pair e.g. "xbtusd"
+        """
+
+        curr_a = pair[:3]
+        curr_b = pair[3:]
+
+        json = KrakenAPI.get_request(KrakenAPI.endpoint_url("Ticker"), params={"pair": pair})
+        try:
+            return float(json["result"][f"X{curr_a.upper()}Z{curr_b.upper()}"]["a"][0])
+        except:
+            raise KrakenAPI.APIError(f"Unexpected response format: {json}")
+        
+    def place_order(self, pair:str, amount:float, commit:bool=True):
+        """
+        Places a market order against the specified pair.
+        :param pair: A currency pair e.g. "xbtusd"
+        :param spend: The amount to buy.
+        :param commit: If False, the order will not be placed (this can be used for test purposes).
+        """
+
+        return self.post_request(KrakenAPI.endpoint_url("AddOrder"), {})
+
+
 try:
     config_file = open("config.json")
 except:
@@ -50,7 +105,14 @@ for key in ["api_key", "api_secret", "pair", "spend"]:
     if key not in config:
         raise SystemExit(f"Missing required key '{key}' in config.json.")
 
-btc_spot = KrakenAPI.get_spot_price(config["pair"])
+try:
+    btc_spot = KrakenAPI.get_spot_price(config["pair"])
+except KrakenAPI.APIError as e:
+    raise SystemExit(f"Unable to get spot price. {e}")
 order_value_btc = config["spend"] / btc_spot
 print(f'Current BTC price: £{btc_spot}')
 print(f'Order Value: £{config["spend"]} -> \u20bf{order_value_btc:.8f}')
+
+api_instance = KrakenAPI(config["api_key"], config["api_secret"])
+order_json = api_instance.place_order(config["pair"], order_value_btc, False)
+print(order_json)
