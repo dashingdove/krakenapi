@@ -15,6 +15,7 @@ class KrakenAPI:
     class APIError (Exception):
         "An error occurred when attempting to call the API"
 
+    API_URL = "https://api.kraken.com"
     endpoints = {"public": ["Ticker"], "private": ["AddOrder"]}
 
     @staticmethod
@@ -25,8 +26,8 @@ class KrakenAPI:
         raise ValueError("Invalid endpoint")
 
     @staticmethod
-    def endpoint_url(endpoint:str):
-        return f"https://api.kraken.com/0/{KrakenAPI.endpoint_type(endpoint)}/{endpoint}"
+    def endpoint_uri(endpoint:str):
+        return f"/0/{KrakenAPI.endpoint_type(endpoint)}/{endpoint}"
     
     def get_signature(self, url, data):
 
@@ -52,17 +53,21 @@ class KrakenAPI:
             raise KrakenAPI.APIError("Unable to contact API")
 
     @staticmethod
-    def get_request(url:str, **kwargs):
-        response = requests.get(url, **kwargs)
+    def get_request(uri:str, data:dict, **kwargs):
+        response = requests.get(
+            f"{KrakenAPI.API_URL}{uri}",
+            params=data,
+            **kwargs
+        )
         return KrakenAPI.handle_response(response)
         
-    def post_request(self, url:str, data:dict, **kwargs):
+    def post_request(self, uri:str, data:dict, **kwargs):
         data = data | {"nonce": str(int(time.time()*1000))}
         response = requests.post(
-            url,
+            f"{KrakenAPI.API_URL}{uri}",
             headers={
                 "API-Key": self.api_key,
-                "API-Sign": self.get_signature(url, data),
+                "API-Sign": self.get_signature(uri, data),
             },
             data=data,
             **kwargs
@@ -79,7 +84,7 @@ class KrakenAPI:
         curr_a = pair[:3]
         curr_b = pair[3:]
 
-        json = KrakenAPI.get_request(KrakenAPI.endpoint_url("Ticker"), params={"pair": pair})
+        json = KrakenAPI.get_request(KrakenAPI.endpoint_uri('Ticker'), {"pair": pair})
         try:
             return float(json["result"][f"X{curr_a.upper()}Z{curr_b.upper()}"]["a"][0])
         except:
@@ -93,7 +98,7 @@ class KrakenAPI:
         :param validate: If True, the order will not be placed (this can be used for test purposes).
         """
 
-        return self.post_request(KrakenAPI.endpoint_url("AddOrder"),
+        return self.post_request(KrakenAPI.endpoint_uri('AddOrder'),
             {
                 "pair": pair,
                 "volume": volume,
